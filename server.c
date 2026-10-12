@@ -171,6 +171,34 @@ static void handleClient(SOCK_T client) {
     if (received <= 0) { CLOSESOCK(client); return; }
     request[received] = '\0';
 
+    /* A browser can send the headers and the form body in separate network
+       packets, so one recv() may only give us the headers. Keep reading until
+       the whole body has arrived. The Content-Length header tells us how many
+       body bytes to expect. */
+    char *headerEnd = strstr(request, "\r\n\r\n");
+    while (headerEnd == NULL && received < BUF_SIZE - 1) {
+        int more = recv(client, request + received, BUF_SIZE - 1 - received, 0);
+        if (more <= 0) break;
+        received += more;
+        request[received] = '\0';
+        headerEnd = strstr(request, "\r\n\r\n");
+    }
+    if (headerEnd != NULL) {
+        int expected = 0;
+        char *cl = strstr(request, "Content-Length:");
+        if (cl == NULL) cl = strstr(request, "content-length:");
+        if (cl != NULL) expected = atoi(cl + 15);
+
+        int haveBody = received - (int)((headerEnd + 4) - request);
+        while (haveBody < expected && received < BUF_SIZE - 1) {
+            int more = recv(client, request + received, BUF_SIZE - 1 - received, 0);
+            if (more <= 0) break;
+            received += more;
+            haveBody += more;
+            request[received] = '\0';
+        }
+    }
+
     char method[16] = "", path[256] = "", query[1024] = "";
     parseRequestLine(request, method, path, query);
 
